@@ -8,6 +8,7 @@ import reflex as rx
 from authlib.jose import jwt, JoseError, JWTClaims
 from reflex import Component, ImportVar
 from reflex.utils.serializers import serializer
+from reflex.event import EventType
 
 from reflex_clerk.clerk_client import clerk_client, clerk_response_models
 from reflex_clerk.clerk_client.clerk_client import ClerkAPIClient
@@ -234,6 +235,10 @@ class ClerkSessionSynchronizer(rx.Component):
     """ClerkSessionSynchronizer component."""
     tag = "ClerkSessionSynchronizer"
 
+    on_signed_in: rx.EventHandler[lambda: []] | None
+
+    on_signed_out: rx.EventHandler[lambda: []] | None
+
     def add_imports(self) -> dict[str, Union[str, ImportVar, list[Union[str, ImportVar]]]]:
         addl_imports = {
             "@clerk/clerk-react": ["useAuth"],
@@ -248,7 +253,7 @@ class ClerkSessionSynchronizer(rx.Component):
 
         return [
             """
-function ClerkSessionSynchronizer({ children }) {
+function ClerkSessionSynchronizer({ children, onSignedIn, onSignedOut }) {
   const { getToken, isLoaded, isSignedIn } = useAuth()
   const [ addEvents, connectErrors ] = useContext(EventLoopContext)
 
@@ -257,9 +262,15 @@ function ClerkSessionSynchronizer({ children }) {
         if (isSignedIn) {
           getToken().then(token => {
             addEvents([Event("%s.set_clerk_session", {token})])
+            if (onSignedIn) {
+              onSignedIn()
+            }
           })
         } else {
           addEvents([Event("%s.clear_clerk_session")])
+          if (onSignedOut) {
+            onSignedOut()
+          }
         }
       }
   }, [isSignedIn])      
@@ -387,6 +398,7 @@ class ClerkProvider(rx.Component):
 
     telemetry: bool = None
     """Controls whether or not Clerk will collect telemetry data."""
+ 
 
     @classmethod
     def create(cls, *children, **props) -> 'ClerkProvider':
@@ -417,8 +429,11 @@ class ClerkProvider(rx.Component):
                 "be found in your Clerk Dashboard on the API Keys page:\n"
                 "https://dashboard.clerk.com/last-active?path=api-keys")
 
+        on_signed_in = props.pop('on_signed_in', None)
+        on_signed_out = props.pop('on_signed_out', None) 
+
         # Create a synchronizer and wrap it in a ClerkProvider.
-        synchronizer = ClerkSessionSynchronizer.create(*children)
+        synchronizer = ClerkSessionSynchronizer.create(*children, on_signed_in=on_signed_in, on_signed_out=on_signed_out)
         clerk_provider = super().create(synchronizer, **props)
 
         # Wrap the ClerkProvider in a Fragment, as otherwise the outer provider component
@@ -445,6 +460,8 @@ def clerk_provider(
         domain: typing.Optional[str] = None,
         sign_in_url: typing.Optional[str] = None,
         telemetry: typing.Optional[bool] = None,
+        on_signed_in: typing.Optional[EventType[()]] = None,
+        on_signed_out: typing.Optional[EventType[()]] = None,
 ) -> Component:
     """
     A component which wraps your application and provides a context for Clerk to function.
@@ -488,6 +505,8 @@ def clerk_provider(
         domain: This option sets the domain of the satellite application. If your application is a satellite application, this option is required.
         sign_in_url: This URL will be used for any redirects that might happen and needs to point to your primary application. This option is optional for production instances and required for development instances. It's recommended to use the environment variable instead.
         telemetry: Controls whether or not Clerk will collect telemetry data.
+        on_signed_in: An event handler that is called when the user signs in.
+        on_signed_out: An event handler that is called when the user signs out.
 
     Returns:
         ClerkProvider: A new instance of ClerkProvider.
@@ -510,4 +529,7 @@ def clerk_provider(
         is_satellite=is_satellite,
         domain=domain,
         sign_in_url=sign_in_url,
-        telemetry=telemetry)
+        telemetry=telemetry,
+        on_signed_in=on_signed_in,
+        on_signed_out=on_signed_out,
+        )
